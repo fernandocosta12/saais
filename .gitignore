@@ -1,0 +1,18 @@
+# Segredos — NUNCA versionar
+.env
+.env.*
+!.env.example
+supabase/.env
+supabase/.temp/
+*.pem
+*.key
+
+# Dependências e build
+node_modules/
+dist/
+.next/
+.vercel/
+
+# Sistema
+.DS_Store
+Thumbs.db

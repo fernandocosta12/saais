@@ -1,0 +1,10 @@
+project_id = "tjhuayoppfvdyzfbfpew"
+
+# Funções públicas: o cliente do restaurante não tem conta.
+# A proteção é feita dentro da função (limite de requisições, validação,
+# preços recalculados no banco) e, no webhook, pela assinatura do gateway.
+[functions.create-order]
+verify_jwt = false
+
+[functions.payment-webhook]
+verify_jwt = false
