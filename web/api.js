@@ -169,6 +169,62 @@
     fn(name, body) {
       return request('/functions/v1/' + name, { method: 'POST', auth: false, body });
     },
+    // ---------- Storage (fotos) ----------
+    // Reduz a foto no aparelho (máx. 1200px), converte para WebP/JPEG e remove metadados (ex.: GPS)
+    async prepareImage(file, maxSide) {
+      maxSide = maxSide || 1200;
+      if (!file || !/^image\//.test(file.type)) throw new ApiError('Escolha um arquivo de imagem (JPG, PNG ou WebP).', 0);
+      if (file.size > 15 * 1024 * 1024) throw new ApiError('Imagem muito grande (máximo 15 MB).', 0);
+      let bmp;
+      try { bmp = await createImageBitmap(file); }
+      catch (e) { throw new ApiError('Não foi possível ler essa imagem. Tente outra foto.', 0); }
+      const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(bmp, 0, 0, w, h);
+      if (bmp.close) bmp.close();
+      const toBlob = (type, q) => new Promise((res) => canvas.toBlob(res, type, q));
+      let blob = await toBlob('image/webp', 0.82);
+      if (!blob || blob.type !== 'image/webp') blob = await toBlob('image/jpeg', 0.85);
+      if (!blob) throw new ApiError('Não foi possível processar a imagem.', 0);
+      if (blob.size > 2 * 1024 * 1024) blob = await toBlob('image/jpeg', 0.6);
+      if (blob.size > 2 * 1024 * 1024) throw new ApiError('A imagem continua grande demais depois de comprimida.', 0);
+      return blob;
+    },
+    // Envia para store-media/<loja>/<id-aleatório>.<ext> e devolve a URL pública
+    async uploadStoreImage(storeId, file) {
+      const blob = await this.prepareImage(file);
+      const ext = blob.type === 'image/webp' ? 'webp' : 'jpg';
+      const path = storeId + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)) + '.' + ext;
+      if (session && session.expires_at * 1000 < Date.now() + 60000) await refresh();
+      if (!session) throw new ApiError('Sua sessão expirou. Entre novamente.', 401);
+      let r;
+      try {
+        r = await fetch(C.url + '/storage/v1/object/store-media/' + path, {
+          method: 'POST',
+          headers: { apikey: C.key, Authorization: 'Bearer ' + session.access_token, 'Content-Type': blob.type, 'x-upsert': 'false', 'cache-control': '31536000' },
+          body: blob
+        });
+      } catch (e) { throw new ApiError('Sem conexão. Verifique sua internet.', 0); }
+      if (!r.ok) {
+        const d = await r.json().catch(() => null);
+        const m = d && (d.message || d.error) || '';
+        throw new ApiError(/row-level|policy|Unauthorized|403/i.test(m + r.status) ? 'Você não tem permissão para enviar fotos desta loja.' : 'Falha ao enviar a foto. Tente de novo.', r.status);
+      }
+      return C.url + '/storage/v1/object/public/store-media/' + path;
+    },
+    // Remove a foto antiga (melhor esforço: se falhar, só fica um arquivo órfão)
+    async removeStoreImage(publicUrl) {
+      const prefix = C.url + '/storage/v1/object/public/store-media/';
+      if (!publicUrl || publicUrl.indexOf(prefix) !== 0 || !session) return;
+      try {
+        await fetch(C.url + '/storage/v1/object/store-media/' + publicUrl.slice(prefix.length), {
+          method: 'DELETE', headers: { apikey: C.key, Authorization: 'Bearer ' + session.access_token }
+        });
+      } catch (e) {}
+    },
+    isStoreImage(u) { return typeof u === 'string' && u.indexOf(C.url + '/storage/v1/object/public/store-media/') === 0; },
+
     // Edge Function que exige o usuário logado (manda o token da sessão)
     fnAuth(name, body) {
       return request('/functions/v1/' + name, { method: 'POST', body });

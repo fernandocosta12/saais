@@ -183,7 +183,7 @@ Testes (25/11/2026): 13 no banco (cofre, permissões, loja errada, desconexão a
 Decisões de segurança no frontend:
 - **Sem `onclick` nem script inline**: tudo via `data-act` e arquivos `.js`, o que permite a CSP `script-src 'self'` (bloqueia script injetado).
 - **Todo texto vindo do banco passa por `ui.esc()`** antes de ir para a tela. Testado com uma descrição contendo `<script>`.
-- Links de imagem e logo só são aceitos se começarem com `https://`.
+- **Fotos por upload** (Supabase Storage, bucket `store-media`): o painel reduz a imagem para no máximo 1200 px, converte para WebP/JPEG e remove metadados (como GPS) antes de enviar. Limite de 2 MB e só JPEG/PNG/WebP no servidor. Envio e remoção só por dono/gerente, na pasta `<id-da-loja>/` e com nome aleatório; visitantes não listam arquivos. O banco só aceita `image_url`/`logo_url` apontando para a pasta da própria loja nesse bucket (bloqueia links externos), e a CSP só carrega imagens do Supabase.
 - O carrinho manda só `product_id`, quantidade, adicionais e observação. Nenhum preço sai do navegador.
 - A tela esconde o que o papel não pode fazer, mas quem garante a regra é o banco.
 - Cabeçalhos de segurança (CSP, HSTS, X-Frame-Options, nosniff) em `web/vercel.json`.

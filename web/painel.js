@@ -248,17 +248,25 @@
       (menu.cats.map((c) => '<span class="pill ' + (c.is_active ? '' : 'red') + '" style="padding:6px 10px">' + esc(c.name) +
         (adm ? ' <a href="#" data-act="toggleCat" data-id="' + c.id + '" title="Mostrar/ocultar">' + (c.is_active ? '👁' : '🚫') + '</a> <a href="#" data-act="delCat" data-id="' + c.id + '" title="Excluir">✕</a>' : '') + '</span>').join('') || '<span class="muted small">Nenhuma categoria.</span>') + '</div>' +
       (adm ? '<div class="row" style="margin-top:12px;max-width:420px"><input id="newCat" maxlength="60" placeholder="Nova categoria"><button class="btn sec" data-act="addCat">Adicionar</button></div>' : '') + '</div>';
-    h += '<div class="card tblwrap"><table><thead><tr><th>Item</th><th>Categoria</th><th>Preço (R$)</th>' + (adm ? '<th>Custo (R$)</th><th>Margem</th>' : '') + '<th>Disponível</th>' + (adm ? '<th></th>' : '') + '</tr></thead><tbody>' +
+    h += '<div class="card tblwrap"><table><thead><tr><th>Foto</th><th>Item</th><th>Categoria</th><th>Preço (R$)</th>' + (adm ? '<th>Custo (R$)</th><th>Margem</th>' : '') + '<th>Disponível</th>' + (adm ? '<th></th>' : '') + '</tr></thead><tbody>' +
       (menu.prods.map((p) => {
         const cost = menu.costs[p.id] || 0, m = p.price_cents ? (p.price_cents - cost) / p.price_cents * 100 : 0;
         const nAdd = menu.addons.filter((a) => a.product_id === p.id).length;
-        return '<tr><td><b>' + esc(p.name) + '</b>' + (p.description ? '<div class="small muted">' + esc(p.description.slice(0, 70)) + '</div>' : '') + '</td>' +
+        const thumb = api.isStoreImage(p.image_url)
+          ? '<img src="' + esc(p.image_url) + '" alt="" class="thumb">'
+          : '<span class="thumb empty">🍽️</span>';
+        const photo = adm
+          ? '<label class="photo-pick" title="' + (p.image_url ? 'Trocar foto' : 'Adicionar foto') + '">' + thumb +
+            '<input type="file" accept="image/jpeg,image/png,image/webp" class="hidden" data-change="prodPhoto" data-id="' + p.id + '"><span class="small">' + (p.image_url ? 'Trocar' : '📷 Foto') + '</span></label>' +
+            (p.image_url ? '<a href="#" class="small muted" data-act="prodPhotoRemove" data-id="' + p.id + '">remover</a>' : '')
+          : thumb;
+        return '<tr><td style="white-space:nowrap">' + photo + '</td><td><b>' + esc(p.name) + '</b>' + (p.description ? '<div class="small muted">' + esc(p.description.slice(0, 70)) + '</div>' : '') + '</td>' +
           '<td>' + (adm ? '<select data-change="prodCat" data-id="' + p.id + '" style="width:150px">' + catOptions(p.category_id) + '</select>' : esc(catName(p.category_id))) + '</td>' +
           '<td>' + (adm ? '<input inputmode="decimal" value="' + ui.centsToInput(p.price_cents) + '" data-change="prodPrice" data-id="' + p.id + '">' : money(p.price_cents)) + '</td>' +
           (adm ? '<td><input inputmode="decimal" value="' + ui.centsToInput(cost) + '" data-change="prodCost" data-id="' + p.id + '"></td><td><span class="pill ' + (m >= 60 ? 'ok' : m >= 45 ? 'warn' : 'red') + '">' + m.toFixed(0) + '%</span></td>' : '') +
           '<td><button class="toggle ' + (p.is_available ? 'on' : '') + '" data-act="toggleProd" data-id="' + p.id + '" ' + (adm ? '' : 'disabled') + '><span class="sw"></span>' + (p.is_available ? 'Sim' : 'Esgotado') + '</button></td>' +
           (adm ? '<td class="row" style="gap:6px"><button class="btn sec sm" data-act="openAddons" data-id="' + p.id + '">Adicionais (' + nAdd + ')</button><button class="btn red sm" data-act="delProd" data-id="' + p.id + '">Excluir</button></td>' : '') + '</tr>';
-      }).join('') || '<tr><td colspan="7" class="muted">Nenhum item ainda.</td></tr>') + '</tbody></table></div>';
+      }).join('') || '<tr><td colspan="8" class="muted">Nenhum item ainda.</td></tr>') + '</tbody></table></div>';
     if (adm) {
       h += '<div class="card"><h3>Novo item</h3><div class="formgrid">' +
         '<div><label class="f" for="nName">Nome</label><input id="nName" maxlength="80"></div>' +
@@ -266,7 +274,8 @@
         '<div><label class="f" for="nPrice">Preço (R$)</label><input id="nPrice" inputmode="decimal" placeholder="29,90"></div>' +
         '<div><label class="f" for="nCost">Custo (R$)</label><input id="nCost" inputmode="decimal" placeholder="11,00"></div></div>' +
         '<label class="f" for="nDesc">Descrição</label><input id="nDesc" maxlength="500">' +
-        '<label class="f" for="nImg">Link da foto (https://…, opcional)</label><input id="nImg" maxlength="500">' +
+        '<label class="f" for="nImgFile">Foto (opcional)</label><div class="row"><img id="nImgPreview" class="thumb hidden" alt=""><input id="nImgFile" type="file" accept="image/jpeg,image/png,image/webp" data-change="newProdPreview"></div>' +
+        '<p class="small muted">A foto é reduzida automaticamente antes de enviar.</p>' +
         '<div id="nErr" class="err"></div><button class="btn" data-act="addProd">Adicionar ao cardápio</button></div>';
     }
     main().innerHTML = h;
@@ -369,7 +378,10 @@
       '<div><label class="f" for="sMin">Pedido mínimo (R$)</label><input id="sMin" inputmode="decimal" value="' + ui.centsToInput(s.min_order_cents) + '" ' + dis + '></div>' +
       '<div><label class="f" for="sPrep">Tempo de preparo (min)</label><input id="sPrep" inputmode="numeric" value="' + s.prep_minutes + '" ' + dis + '></div></div>' +
       '<label class="f" for="sAddr">Endereço</label><input id="sAddr" maxlength="300" value="' + esc(s.address || '') + '" ' + dis + '>' +
-      '<label class="f" for="sLogo">Link do logo (https://…, opcional)</label><input id="sLogo" maxlength="500" value="' + esc(s.logo_url || '') + '" ' + dis + '>' +
+      '<label class="f">Logo da loja</label><div class="row" style="flex-wrap:wrap">' +
+        (api.isStoreImage(s.logo_url) ? '<img src="' + esc(s.logo_url) + '" alt="Logo" class="thumb" style="width:64px;height:64px">' : '<span class="thumb empty" style="width:64px;height:64px">' + esc(s.name.slice(0, 1)) + '</span>') +
+        (adm ? '<label class="btn sec sm">' + (s.logo_url ? 'Trocar logo' : '📷 Enviar logo') + '<input type="file" accept="image/jpeg,image/png,image/webp" class="hidden" data-change="logoUpload"></label>' +
+          (s.logo_url ? '<button class="btn red sm" data-act="logoRemove">Remover</button>' : '') : '') + '</div>' +
       '<div id="sErr" class="err"></div>' + (adm ? '<button class="btn" data-act="saveStore">Salvar</button>' : '<p class="small muted">Somente dono ou gerente pode alterar.</p>') + '</div>' +
       (adm ? '<div class="card" id="payCard"><h3>Pagamento por Pix</h3><p class="small muted">Carregando…</p></div>' : '') +
       '<div class="card small muted">Logado como ' + esc(api.session && api.session.user ? api.session.user.email : '') + ' · ' + esc(ROLE[role()]) + '</div>';
@@ -453,13 +465,53 @@
     saveStore: async () => {
       const err = (m) => { $('#sErr').textContent = m; };
       const fee = ui.toCents($('#sFee').value), min = ui.toCents($('#sMin').value), prep = parseInt($('#sPrep').value, 10);
-      const wa = ui.digits($('#sWa').value), logo = $('#sLogo').value.trim();
+      const wa = ui.digits($('#sWa').value);
       if ($('#sName').value.trim().length < 2) return err('Informe o nome.');
       if (!(fee >= 0) || !(min >= 0)) return err('Valores inválidos.');
       if (!(prep >= 5 && prep <= 240)) return err('Tempo de preparo entre 5 e 240 minutos.');
       if (wa && !/^\d{10,13}$/.test(wa)) return err('WhatsApp inválido.');
-      if (logo && !/^https:\/\//i.test(logo)) return err('O link do logo precisa começar com https://');
-      if (await run(() => patchStore({ name: $('#sName').value.trim(), whatsapp: wa || null, delivery_fee_cents: fee, min_order_cents: min, prep_minutes: prep, address: $('#sAddr').value.trim() || null, logo_url: logo || null }), 'Configurações salvas')) renderShell();
+      if (await run(() => patchStore({ name: $('#sName').value.trim(), whatsapp: wa || null, delivery_fee_cents: fee, min_order_cents: min, prep_minutes: prep, address: $('#sAddr').value.trim() || null }), 'Configurações salvas')) renderShell();
+    },
+    // fotos
+    prodPhoto: async (el) => {
+      const file = el.files[0]; if (!file) return;
+      const p = menu.prods.find((x) => x.id === el.dataset.id); if (!p) return;
+      toast('Enviando foto…');
+      const old = p.image_url;
+      if (await run(async () => {
+        const url = await api.uploadStoreImage(store().id, file);
+        await api.update('products', { id: 'eq.' + p.id }, { image_url: url });
+        if (old) api.removeStoreImage(old);
+      }, 'Foto salva')) tabMenu();
+      else el.value = '';
+    },
+    prodPhotoRemove: async (el) => {
+      const p = menu.prods.find((x) => x.id === el.dataset.id); if (!p || !confirm('Remover a foto deste item?')) return;
+      const old = p.image_url;
+      if (await run(() => api.update('products', { id: 'eq.' + p.id }, { image_url: null }), 'Foto removida')) { api.removeStoreImage(old); tabMenu(); }
+    },
+    newProdPreview: (el) => {
+      const img = $('#nImgPreview'), f = el.files[0];
+      if (!img) return;
+      if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+      if (f && /^image\//.test(f.type)) { const u = URL.createObjectURL(f); img.dataset.url = u; img.src = u; img.classList.remove('hidden'); }
+      else img.classList.add('hidden');
+    },
+    logoUpload: async (el) => {
+      const file = el.files[0]; if (!file) return;
+      toast('Enviando logo…');
+      const old = store().logo_url;
+      if (await run(async () => {
+        const url = await api.uploadStoreImage(store().id, file);
+        await patchStore({ logo_url: url });
+        if (old) api.removeStoreImage(old);
+      }, 'Logo salvo')) renderShell();
+      else el.value = '';
+    },
+    logoRemove: async () => {
+      if (!confirm('Remover o logo da loja?')) return;
+      const old = store().logo_url;
+      if (await run(() => patchStore({ logo_url: null }), 'Logo removido')) { api.removeStoreImage(old); renderShell(); }
     },
     // pagamentos
     payShowForm: () => { const f = $('#payForm'); if (f) f.classList.remove('hidden'); },
@@ -512,16 +564,18 @@
     delProd: async (el) => { if (!confirm('Excluir este item do cardápio?')) return; if (await run(() => api.remove('products', { id: 'eq.' + el.dataset.id }), 'Item excluído')) tabMenu(); },
     addProd: async () => {
       const err = (m) => { $('#nErr').textContent = m; };
-      const name = $('#nName').value.trim(), price = ui.toCents($('#nPrice').value), costRaw = $('#nCost').value.trim(), cost = costRaw ? ui.toCents(costRaw) : 0, img = $('#nImg').value.trim();
+      const name = $('#nName').value.trim(), price = ui.toCents($('#nPrice').value), costRaw = $('#nCost').value.trim(), cost = costRaw ? ui.toCents(costRaw) : 0;
+      const file = $('#nImgFile').files[0];
       if (!name) return err('Informe o nome.');
       if (!(price > 0)) return err('Informe um preço válido.');
       if (!(cost >= 0)) return err('Custo inválido.');
-      if (img && !/^https:\/\//i.test(img)) return err('O link da foto precisa começar com https://');
+      const btn = document.querySelector('[data-act=addProd]'); if (btn) { btn.disabled = true; btn.textContent = file ? 'Enviando foto…' : 'Salvando…'; }
       const ok = await run(async () => {
-        const rows = await api.insert('products', { store_id: store().id, category_id: $('#nCat').value || null, name, description: $('#nDesc').value.trim() || null, price_cents: price, image_url: img || null, position: menu.prods.length + 1 });
+        const img = file ? await api.uploadStoreImage(store().id, file) : null;
+        const rows = await api.insert('products', { store_id: store().id, category_id: $('#nCat').value || null, name, description: $('#nDesc').value.trim() || null, price_cents: price, image_url: img, position: menu.prods.length + 1 });
         if (cost) await api.insert('product_costs', { product_id: rows[0].id, store_id: store().id, cost_cents: cost }, { onConflict: 'product_id' });
       }, 'Item adicionado');
-      if (ok) tabMenu();
+      if (ok) tabMenu(); else if (btn) { btn.disabled = false; btn.textContent = 'Adicionar ao cardápio'; }
     },
     openAddons: (el) => drawAddons(el.dataset.id),
     addAddon: async (el) => {

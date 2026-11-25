@@ -17,7 +17,7 @@
 
   function readLS(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
   function writeLS(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
-  const safeImg = (u) => /^https:\/\//i.test(u || '') ? u : '';
+  const safeImg = (u) => api.isStoreImage(u) ? u : '';  // só fotos do nosso armazenamento
   const prodById = (id) => prods.find((p) => p.id === id);
 
   // ------------------------------------------------------------ carga

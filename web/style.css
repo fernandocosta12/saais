@@ -133,3 +133,9 @@ td input{padding:6px 8px;width:96px}
   .side .foot{margin:0;padding:0}
   .main{padding:14px}
 }
+
+/* fotos */
+.thumb{width:48px;height:48px;border-radius:10px;object-fit:cover;background:#faf6f0;display:inline-grid;place-items:center;font-size:22px;flex:none;border:1px solid var(--line)}
+.thumb.empty{color:var(--mut);font-weight:700}
+.photo-pick{display:inline-flex;align-items:center;gap:8px;cursor:pointer;margin-right:6px}
+.photo-pick:hover .thumb{outline:2px solid var(--pri)}
