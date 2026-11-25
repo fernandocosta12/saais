@@ -136,7 +136,14 @@
       ck.quote = null; ck.quoteErr = e.message;
       if (ck.coupon && /upom/.test(e.message)) { /* erro de cupom: mantém o texto para o usuário corrigir */ }
     }
-    if (step === 'dados') drawCart();
+    if (step === 'dados' && document.getElementById('ckName')) {
+      // preserva o que a pessoa digitou enquanto o total era calculado
+      keepCk();
+      const active = document.activeElement && document.activeElement.id;
+      drawCart();
+      const el = active && document.getElementById(active);
+      if (el) { el.focus(); if (el.setSelectionRange && el.type !== 'email') { const n = el.value.length; try { el.setSelectionRange(n, n); } catch (e) {} } }
+    }
   }
 
   function drawCart() {

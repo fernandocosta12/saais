@@ -3,6 +3,7 @@
 Delivery próprio para restaurantes, sem comissão por pedido: cardápio digital, Pix, painel de pedidos, cupons, base de clientes e relatórios de lucro.
 
 - **Arquitetura e segurança:** [docs/ARQUITETURA.md](docs/ARQUITETURA.md)
+- **Site no ar:** https://saais-beta.vercel.app (painel em `/painel.html`, loja de exemplo em `/loja.html?s=brasa-burger`)
 - **Frontend:** pasta `web/` (loja, acompanhamento e painel), já ligado ao Supabase
 - **Protótipo antigo:** `prototipo/index.html`
 - **Banco:** Supabase `pedido-direto` (região São Paulo); migrações em `supabase/migrations`
