@@ -32,7 +32,7 @@ Plataforma de delivery próprio para restaurantes: cardápio digital, pedido sem
 | Regras de dinheiro | Funções SQL `security definer` | O navegador nunca define preço, total ou status de pagamento |
 | Backend | Supabase Edge Functions (Deno) | Guardam os segredos do gateway; recebem o webhook |
 | Pagamento | Asaas (sugestão) — trocável pela interface `PaymentProvider` | Pix com webhook, bom para PJ pequena no Brasil |
-| Frontend | React + Vite (próxima etapa), hospedado na Vercel | O protótipo atual está em `prototipo/index.html` |
+| Frontend | HTML + JavaScript puro em `web/`, sem dependências nem build; hospedagem estática (Vercel) | Menos peças para quebrar ou atualizar; política de segurança (CSP) rígida |
 
 ## 2. Modelo de dados
 
@@ -128,20 +128,42 @@ Qualquer transição fora desse desenho é recusada pelo banco (`update_order_st
 - [ ] Ativar **proteção contra senhas vazadas** e **MFA** para donos (Auth → Settings)
 - [ ] Confirmação de e-mail obrigatória no cadastro
 - [ ] Configurar secrets das Edge Functions (`APP_ENV=production`, `ALLOWED_ORIGINS`, chaves do gateway)
-- [ ] Agendar `expire_pending_payments()` a cada minuto (pg_cron)
-- [ ] Ativar Realtime só na tabela `orders` (o RLS continua valendo)
+- [x] Agendar `expire_pending_payments()` a cada minuto (pg_cron) — feito
+- [x] Edge Functions publicadas (`create-order`, `payment-webhook`) — feito, em modo desenvolvimento
+- [ ] Auth → URL Configuration: definir *Site URL* e *Redirect URLs* para o domínio do painel (links de confirmação de e-mail)
+- [ ] SMTP próprio no Auth (o e-mail padrão do Supabase tem limite baixo de envios por hora)
 - [ ] Backups: plano Pro (PITR) quando houver loja real
 - [ ] Domínio próprio com HTTPS e cabeçalhos de segurança (CSP) no frontend
 - [ ] Política de privacidade e termos de uso publicados
 - [ ] Rodar `get_advisors` (segurança e performance) a cada migração
 - [ ] Teste de ponta a ponta com o Pix do sandbox do gateway
 
-## 4. Estrutura do repositório
+## 4. Frontend (`web/`)
+
+| Página | Quem usa | O que faz |
+|---|---|---|
+| `loja.html?s=<slug>` | Cliente final (sem conta) | Cardápio, sacola, cupom, checkout. Totais vêm do servidor (`create-order` → `quote`) |
+| `pedido.html?t=<token>` | Cliente final | Acompanhamento do pedido e código Pix; atualiza a cada 10 s |
+| `painel.html` | Equipe do restaurante (login) | Pedidos (atualiza a cada 5 s, com aviso sonoro), cardápio, adicionais, custos, cupons, clientes, relatórios e configurações |
+| `index.html` | — | Página inicial simples |
+
+Decisões de segurança no frontend:
+- **Sem `onclick` nem script inline**: tudo via `data-act` e arquivos `.js`, o que permite a CSP `script-src 'self'` (bloqueia script injetado).
+- **Todo texto vindo do banco passa por `ui.esc()`** antes de ir para a tela. Testado com uma descrição contendo `<script>`.
+- Links de imagem e logo só são aceitos se começarem com `https://`.
+- O carrinho manda só `product_id`, quantidade, adicionais e observação. Nenhum preço sai do navegador.
+- A tela esconde o que o papel não pode fazer, mas quem garante a regra é o banco.
+- Cabeçalhos de segurança (CSP, HSTS, X-Frame-Options, nosniff) em `web/vercel.json`.
+
+Testes de interface (24/11/2026, navegador real + servidor simulado, com a CSP ativa): 16 cenários OK, incluindo pedido com adicional e cupom (total R$ 67,02 vindo do servidor), carga do pedido sem preços, acompanhamento atualizando sozinho, bloqueio do pedido mínimo e da loja fechada, login com senha errada, aceite de pedido, chegada de pedido novo sem recarregar, cadastro de item com custo, cupom, taxa de entrega e pausa da loja. Nenhuma violação de CSP.
+
+## 5. Estrutura do repositório
 
 ```
 pedido-direto/
 ├── docs/ARQUITETURA.md          ← este documento
 ├── prototipo/index.html         ← MVP navegável (dados locais)
+├── web/                         ← frontend real (loja, acompanhamento, painel)
 ├── supabase/
 │   ├── config.toml
 │   ├── migrations/              ← schema, RLS, regras de negócio (já aplicadas)
@@ -154,13 +176,13 @@ pedido-direto/
 └── README.md
 ```
 
-## 5. Roadmap
+## 6. Roadmap
 
 | Fase | Entrega | Status |
 |---|---|---|
 | 0 | Protótipo navegável | ✅ |
 | 1 | Banco seguro + regras de pedido/pagamento | ✅ |
-| 2 | Frontend React: loja pública + painel com login e tempo real | Próximo |
-| 3 | Gateway real (sandbox Asaas) + deploy das Edge Functions | |
+| 2 | Frontend: loja pública, acompanhamento e painel com login | ✅ |
+| 3 | Publicar o site + gateway real (sandbox Asaas) | Próximo |
 | 4 | CRM: disparos de recompra e reativação (WhatsApp API oficial + n8n) | |
 | 5 | Atendente de IA no WhatsApp, motoboys, integrações (iFood, PDVs) | |

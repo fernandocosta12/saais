@@ -2,10 +2,15 @@
 const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") ?? "")
   .split(",").map((s) => s.trim()).filter(Boolean);
 
+const IS_PROD = (Deno.env.get("APP_ENV") ?? "development") === "production";
+
 export function corsHeaders(req: Request): HeadersInit {
   const origin = req.headers.get("origin") ?? "";
-  // Só libera CORS para os domínios do próprio produto (nunca "*")
-  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0] ?? "";
+  // Produção: só os domínios listados em ALLOWED_ORIGINS.
+  // Desenvolvimento sem lista configurada: libera qualquer origem.
+  let allow: string;
+  if (ALLOWED_ORIGINS.length === 0) allow = IS_PROD ? "" : "*";
+  else allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
