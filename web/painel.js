@@ -37,7 +37,7 @@
       if (!api.session) return renderAuth();
       app.innerHTML = '<div class="center card">' + esc(e.message) + '</div>'; return;
     }
-    memberships = memberships.filter((m) => m.stores);
+    memberships = memberships.filter((m) => m.stores).sort((a, b) => a.stores.name.localeCompare(b.stores.name, 'pt-BR'));
     if (!memberships.length) return renderOnboarding();
     let saved = null; try { saved = localStorage.getItem('pd_cur_store'); } catch (e) {}
     cur = memberships.find((m) => m.store_id === saved) || memberships[0];
@@ -113,7 +113,9 @@
       .filter((t) => !t[3] || isAdmin());
     if (!tabs.some((t) => t[0] === tab)) tab = 'pedidos';
     app.innerHTML = '<div class="panel"><aside class="side"><div class="brand">' + esc(store().name) + '</div>' +
-      '<div class="who">' + esc(ROLE[role()]) + (memberships.length > 1 ? ' · <a href="#" data-act="switchStore">trocar loja</a>' : '') + '</div>' +
+      (memberships.length > 1 ? '<div style="padding:0 10px 8px"><select data-change="pickStore" aria-label="Escolher loja" style="padding:7px 9px;font-size:13px">' +
+        memberships.map((m) => '<option value="' + m.store_id + '"' + (m === cur ? ' selected' : '') + '>' + esc(m.stores.name) + '</option>').join('') + '</select></div>' : '') +
+      '<div class="who">' + esc(ROLE[role()]) + '</div>' +
       tabs.map(([id, l, b]) => '<button class="tab ' + (tab === id ? 'on' : '') + '" data-act="tab" data-t="' + id + '"><span>' + l + '</span>' + (b ? '<span class="badge">' + b + '</span>' : '') + '</button>').join('') +
       '<div class="foot"><button class="btn sec sm" data-act="logout">Sair</button></div></aside><main class="main" id="pmain"><div class="loading">Carregando…</div></main></div>';
     ({ pedidos: tabOrders, cardapio: tabMenu, cupons: tabCoupons, clientes: tabClients, relatorios: tabReports, loja: tabStore })[tab]();
@@ -406,8 +408,8 @@
     },
     // navegação
     tab: (el) => { tab = el.dataset.t; renderShell(); },
-    switchStore: () => {
-      const i = (memberships.indexOf(cur) + 1) % memberships.length; cur = memberships[i];
+    pickStore: (el) => {
+      const m = memberships.find((x) => x.store_id === el.value); if (!m) return; cur = m;
       try { localStorage.setItem('pd_cur_store', cur.store_id); } catch (e) {}
       orders = []; seenPending = null; tab = 'pedidos'; renderShell(); startPolling();
     },
