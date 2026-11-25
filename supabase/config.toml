@@ -8,3 +8,12 @@ verify_jwt = false
 
 [functions.payment-webhook]
 verify_jwt = false
+
+# Painel: a função confere o login e se o usuário é dono da loja
+# (verify_jwt desligado no gateway para o preflight CORS funcionar).
+[functions.connect-payment-account]
+verify_jwt = false
+
+# Só o pg_cron chama: autenticada por segredo guardado no Vault.
+[functions.payment-maintenance]
+verify_jwt = false

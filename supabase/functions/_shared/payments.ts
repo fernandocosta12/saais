@@ -1,112 +1,116 @@
-// Camada de pagamento: troca de gateway sem mexer no resto do sistema.
-// Chaves ficam SOMENTE em secrets da Edge Function (nunca no frontend).
+// Integração com o Asaas usando a conta de CADA restaurante.
+// A chave de API vem do Vault (via get_payment_credentials) e nunca sai do servidor.
+// Docs: https://docs.asaas.com
 
-export interface PixCharge {
-  providerPaymentId: string;
-  copyPaste: string;
-  qrCodeBase64?: string;
-  expiresAt: string; // ISO
+export type AsaasEnv = "sandbox" | "production";
+
+const BASE: Record<AsaasEnv, string> = {
+  sandbox: "https://api-sandbox.asaas.com/v3",
+  production: "https://api.asaas.com/v3",
+};
+export const KEY_PREFIX: Record<AsaasEnv, string> = {
+  sandbox: "$aact_hmlg_",
+  production: "$aact_prod_",
+};
+
+export class AsaasError extends Error {
+  status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
 }
 
-export interface WebhookResult {
-  eventId: string;
-  providerPaymentId: string;
-  paid: boolean;
-  paidAmountCents: number;
-}
-
-export interface PaymentProvider {
-  name: string;
-  createPix(input: { orderId: string; amountCents: number; customerName: string; customerPhone: string; description: string }): Promise<PixCharge>;
-  // Valida a autenticidade do webhook e CONSULTA o gateway para confirmar
-  // o status (nunca confiar só no corpo recebido).
-  parseWebhook(req: Request, rawBody: string): Promise<WebhookResult | null>;
-}
-
-// ---------------------------------------------------------------------
-// Asaas (https://docs.asaas.com) — sugestão inicial para o Brasil
-class AsaasProvider implements PaymentProvider {
-  name = "asaas";
-  private base = Deno.env.get("ASAAS_BASE_URL") ?? "https://api-sandbox.asaas.com/v3";
-  private key = Deno.env.get("ASAAS_API_KEY") ?? "";
-  private webhookToken = Deno.env.get("ASAAS_WEBHOOK_TOKEN") ?? "";
+export class AsaasClient {
+  private apiKey: string;
+  private env: AsaasEnv;
+  constructor(apiKey: string, env: AsaasEnv) { this.apiKey = apiKey; this.env = env; }
 
   private async call(path: string, init: RequestInit = {}) {
-    const res = await fetch(`${this.base}${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", "access_token": this.key, ...(init.headers ?? {}) },
-    });
-    if (!res.ok) throw new Error(`Asaas ${path} -> ${res.status}`);
-    return await res.json();
+    let res: Response;
+    try {
+      res = await fetch(`${BASE[this.env]}${path}`, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "PedidoDireto/1.0",
+          "access_token": this.apiKey,
+          ...(init.headers ?? {}),
+        },
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch (_e) {
+      throw new AsaasError(0, "Sem resposta do Asaas");
+    }
+    const text = await res.text();
+    let data: any = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+    if (!res.ok) {
+      const desc = data?.errors?.[0]?.description ?? `HTTP ${res.status}`;
+      throw new AsaasError(res.status, String(desc));
+    }
+    return data;
   }
 
-  async createPix(i: { orderId: string; amountCents: number; customerName: string; customerPhone: string; description: string }): Promise<PixCharge> {
-    // TODO: reaproveitar o customer do Asaas por telefone em vez de criar sempre
-    const customer = await this.call("/customers", {
+  /** Confere se a chave funciona neste ambiente. */
+  async validate(): Promise<void> {
+    await this.call("/customers?limit=1");
+  }
+
+  /** Nome comercial da conta (opcional, só para o dono conferir). */
+  async accountName(): Promise<string | null> {
+    try {
+      const d = await this.call("/myAccount/commercialInfo");
+      return d?.companyName || d?.name || null;
+    } catch { return null; }
+  }
+
+  async createWebhook(url: string, authToken: string, email: string): Promise<string> {
+    const d = await this.call("/webhooks", {
       method: "POST",
-      body: JSON.stringify({ name: i.customerName, mobilePhone: i.customerPhone, externalReference: i.orderId }),
+      body: JSON.stringify({
+        name: "Pedido Direto",
+        url, email, authToken,
+        enabled: true, interrupted: false, apiVersion: 3, sendType: "SEQUENTIALLY",
+        events: ["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED"],
+      }),
     });
-    const due = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+    return d.id;
+  }
+
+  async deleteWebhook(id: string): Promise<void> {
+    await this.call(`/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async createCustomer(name: string, cpf: string, phone: string): Promise<string> {
+    const d = await this.call("/customers", {
+      method: "POST",
+      // notificationDisabled: o Asaas não manda e-mail/SMS de cobrança ao cliente do restaurante
+      body: JSON.stringify({ name, cpfCnpj: cpf, mobilePhone: phone, notificationDisabled: true }),
+    });
+    return d.id;
+  }
+
+  async createPix(i: { customerId: string; amountCents: number; description: string; externalReference: string }) {
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
     const pay = await this.call("/payments", {
       method: "POST",
       body: JSON.stringify({
-        customer: customer.id, billingType: "PIX", value: i.amountCents / 100,
-        dueDate: due, description: i.description, externalReference: i.orderId,
+        customer: i.customerId, billingType: "PIX", value: i.amountCents / 100,
+        dueDate: today, description: i.description, externalReference: i.externalReference,
       }),
     });
-    const qr = await this.call(`/payments/${pay.id}/pixQrCode`);
-    return {
-      providerPaymentId: pay.id,
-      copyPaste: qr.payload,
-      qrCodeBase64: qr.encodedImage,
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    };
+    const qr = await this.call(`/payments/${encodeURIComponent(pay.id)}/pixQrCode`);
+    return { providerPaymentId: String(pay.id), copyPaste: String(qr.payload), qrCodeBase64: qr.encodedImage as string | undefined };
   }
 
-  async parseWebhook(req: Request, rawBody: string): Promise<WebhookResult | null> {
-    // 1) autenticidade: token configurado no painel do Asaas
-    const token = req.headers.get("asaas-access-token") ?? "";
-    if (!this.webhookToken || !timingSafeEqual(token, this.webhookToken)) return null;
-    const body = JSON.parse(rawBody);
-    if (!body?.payment?.id || !body?.id) return null;
-    // 2) não confia no corpo: consulta o pagamento na API
-    const pay = await this.call(`/payments/${body.payment.id}`);
-    const paid = ["RECEIVED", "CONFIRMED"].includes(pay.status) && pay.billingType === "PIX";
-    return {
-      eventId: String(body.id),
-      providerPaymentId: pay.id,
-      paid,
-      paidAmountCents: Math.round(Number(pay.value) * 100),
-    };
+  async getPayment(id: string) {
+    return await this.call(`/payments/${encodeURIComponent(id)}`);
+  }
+
+  async deletePayment(id: string): Promise<void> {
+    await this.call(`/payments/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 }
 
 // ---------------------------------------------------------------------
-// Mock — só para desenvolvimento local. Bloqueado em produção.
-class MockProvider implements PaymentProvider {
-  name = "mock";
-  async createPix(i: { orderId: string; amountCents: number }): Promise<PixCharge> {
-    return {
-      providerPaymentId: `mock_${crypto.randomUUID()}`,
-      copyPaste: `00020126MOCK${i.orderId}${i.amountCents}`,
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    };
-  }
-  async parseWebhook(req: Request, rawBody: string): Promise<WebhookResult | null> {
-    const secret = Deno.env.get("MOCK_WEBHOOK_SECRET") ?? "";
-    if (!secret || !timingSafeEqual(req.headers.get("x-mock-secret") ?? "", secret)) return null;
-    const b = JSON.parse(rawBody);
-    return { eventId: b.event_id, providerPaymentId: b.payment_id, paid: true, paidAmountCents: b.amount_cents };
-  }
-}
-
-export function getProvider(): PaymentProvider {
-  const name = Deno.env.get("PAYMENT_PROVIDER") ?? "mock";
-  const env = Deno.env.get("APP_ENV") ?? "development";
-  if (name === "mock" && env === "production") throw new Error("Gateway mock não pode rodar em produção");
-  return name === "asaas" ? new AsaasProvider() : new MockProvider();
-}
-
 export function timingSafeEqual(a: string, b: string): boolean {
   const ea = new TextEncoder().encode(a), eb = new TextEncoder().encode(b);
   if (ea.length !== eb.length) return false;
@@ -114,3 +118,30 @@ export function timingSafeEqual(a: string, b: string): boolean {
   for (let i = 0; i < ea.length; i++) diff |= ea[i] ^ eb[i];
   return diff === 0;
 }
+
+export function randomToken(bytes = 32): string {
+  const b = crypto.getRandomValues(new Uint8Array(bytes));
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+export async function sha256hex(s: string): Promise<string> {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(h), (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+export function isValidCpf(raw: string): boolean {
+  const c = String(raw || "").replace(/\D/g, "");
+  if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
+  const dv = (len: number) => {
+    let s = 0;
+    for (let i = 0; i < len; i++) s += Number(c[i]) * (len + 1 - i);
+    const r = (s * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return dv(9) === Number(c[9]) && dv(10) === Number(c[10]);
+}
+
+export type Credentials = {
+  environment: AsaasEnv; status: string; provider_webhook_id: string | null;
+  api_key: string; webhook_token: string;
+};

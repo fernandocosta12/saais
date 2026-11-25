@@ -11,7 +11,7 @@
   let store = null, cats = [], prods = [], addons = {};
   let cart = readLS(CART_KEY, []);
   const saved = readLS(CUST_KEY, {});
-  const ck = { mode: 'delivery', pay: 'pix', name: saved.name || '', phone: saved.phone || '', address: saved.address || '',
+  const ck = { mode: 'delivery', pay: null, cpf: '', name: saved.name || '', phone: saved.phone || '', address: saved.address || '',
     change: '', coupon: '', notes: '', optin: false, quote: null, quoteErr: '', busy: false };
   let step = 'cart', pm = null;
 
@@ -24,9 +24,10 @@
   async function load() {
     if (!/^[a-z0-9-]{3,40}$/.test(slug)) return fatal('Endereço de loja inválido.');
     try {
-      const st = await api.select('stores', { slug: 'eq.' + slug, select: 'id,slug,name,logo_url,address,whatsapp,is_open,high_demand,delivery_fee_cents,min_order_cents,prep_minutes' }, { auth: false });
+      const st = await api.select('stores', { slug: 'eq.' + slug, select: 'id,slug,name,logo_url,address,whatsapp,is_open,high_demand,delivery_fee_cents,min_order_cents,prep_minutes,pix_enabled' }, { auth: false });
       if (!st.length) return fatal('Loja não encontrada.');
       store = st[0];
+      if (!ck.pay || (ck.pay === 'pix' && !store.pix_enabled)) ck.pay = store.pix_enabled ? 'pix' : 'card_on_delivery';
       document.title = store.name + ' — Cardápio';
       const [c, p, a] = await Promise.all([
         api.select('categories', { store_id: 'eq.' + store.id, is_active: 'eq.true', select: 'id,name,position', order: 'position,name' }, { auth: false }),
@@ -124,7 +125,7 @@
     return {
       mode: ck.mode, payment_method: ck.pay, coupon_code: ck.coupon.trim(), notes: ck.notes,
       change_for_cents: ck.pay === 'cash' && ck.change ? ui.toCents(ck.change) : null,
-      customer: { name: ck.name.trim(), phone: ui.digits(ck.phone), address: ck.mode === 'delivery' ? ck.address.trim() : '', marketing_opt_in: ck.optin },
+      customer: { name: ck.name.trim(), phone: ui.digits(ck.phone), address: ck.mode === 'delivery' ? ck.address.trim() : '', marketing_opt_in: ck.optin, cpf: ck.pay === 'pix' ? ui.digits(ck.cpf) : undefined },
       items: cart.map((i) => ({ product_id: i.pid, quantity: i.qty, addon_ids: i.addon_ids, notes: i.notes }))
     };
   }
@@ -179,8 +180,10 @@
       (ck.mode === 'delivery' ? '<label class="f" for="ckAddr">Endereço de entrega</label><textarea id="ckAddr" maxlength="300" autocomplete="street-address" placeholder="Rua, número, bairro, complemento">' + esc(ck.address) + '</textarea>'
         : '<p class="small muted">Retirada em: ' + esc(store.address || 'endereço da loja') + '</p>') +
       '<label class="f">Forma de pagamento</label><div class="seg">' +
-      [['pix', 'Pix'], ['card_on_delivery', 'Cartão na entrega'], ['cash', 'Dinheiro']].map(([v, l]) =>
+      [['pix', 'Pix'], ['card_on_delivery', 'Cartão na entrega'], ['cash', 'Dinheiro']].filter(([v]) => v !== 'pix' || store.pix_enabled).map(([v, l]) =>
         '<button class="' + (ck.pay === v ? 'on' : '') + '" data-act="setCk" data-k="pay" data-v="' + v + '">' + l + '</button>').join('') + '</div>' +
+      (ck.pay === 'pix' ? '<label class="f" for="ckCpf">CPF de quem vai pagar o Pix</label><input id="ckCpf" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="000.000.000-00" value="' + esc(ck.cpf) + '">' +
+        '<p class="small muted" style="margin:4px 0 0">Exigido pelo banco para gerar o Pix. Não fica salvo no restaurante.</p>' : '') +
       (ck.pay === 'cash' ? '<label class="f" for="ckChange">Troco para quanto? (opcional)</label><input id="ckChange" inputmode="decimal" value="' + esc(ck.change) + '" placeholder="Ex.: 100">' : '') +
       '<label class="f" for="ckCoupon">Cupom de desconto</label><div class="row"><input id="ckCoupon" maxlength="20" style="text-transform:uppercase" value="' + esc(ck.coupon) + '"><button class="btn sec" data-act="applyCoupon">Aplicar</button></div>' +
       '<label class="f" for="ckNotes">Observação do pedido (opcional)</label><input id="ckNotes" maxlength="300" value="' + esc(ck.notes) + '">' +
@@ -198,7 +201,7 @@
   }
   function keepCk() {
     const g = (id) => { const e = $('#' + id); return e ? (e.type === 'checkbox' ? e.checked : e.value) : null; };
-    [['ckName', 'name'], ['ckPhone', 'phone'], ['ckAddr', 'address'], ['ckChange', 'change'], ['ckCoupon', 'coupon'], ['ckNotes', 'notes'], ['ckOptin', 'optin']]
+    [['ckName', 'name'], ['ckPhone', 'phone'], ['ckCpf', 'cpf'], ['ckAddr', 'address'], ['ckChange', 'change'], ['ckCoupon', 'coupon'], ['ckNotes', 'notes'], ['ckOptin', 'optin']]
       .forEach(([id, k]) => { const v = g(id); if (v !== null) ck[k] = v; });
   }
 
@@ -209,13 +212,16 @@
     if (ui.digits(ck.phone).length < 10) return err('Informe um WhatsApp válido com DDD.');
     if (ck.mode === 'delivery' && ck.address.trim().length < 8) return err('Informe o endereço completo.');
     if (ck.pay === 'cash' && ck.change && !(ui.toCents(ck.change) > 0)) return err('Valor de troco inválido.');
+    if (ck.pay === 'pix' && !ui.isCpf(ck.cpf)) return err('Informe um CPF válido para pagar com Pix.');
     ck.busy = true; drawCart();
     try {
       const r = await api.fn('create-order', { store_slug: slug, action: 'create', payload: payload() });
       writeLS(CUST_KEY, { name: ck.name.trim(), phone: ck.phone, address: ck.address.trim() });
       writeLS(LAST_KEY, { token: r.public_token, number: r.number, at: Date.now() });
-      cart = []; saveCart(); ck.coupon = ''; ck.notes = ''; ck.change = ''; ck.quote = null; ck.busy = false;
-      if (r.pix) showPix(r); else location.href = 'pedido.html?t=' + encodeURIComponent(r.public_token);
+      cart = []; saveCart(); ck.coupon = ''; ck.notes = ''; ck.change = ''; ck.cpf = ''; ck.quote = null; ck.busy = false;
+      if (r.pix) showPix(r);
+      else if (r.pix_error) { render(); modal(mh('Pedido #' + esc(r.number)) + '<div class="note red" style="margin:0">' + esc(r.pix_error) + '</div><p class="small muted">Esse pedido será cancelado automaticamente em 30 minutos se não for pago.</p><button class="btn full" data-act="close">Voltar ao cardápio</button>'); }
+      else location.href = 'pedido.html?t=' + encodeURIComponent(r.public_token);
     } catch (e) {
       ck.busy = false; drawCart(); $('#ckErr').textContent = e.message;
       if (/disponível|Atualize/.test(e.message)) load();
@@ -254,6 +260,13 @@
       const t = $('#pixCode').textContent;
       (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Código copiado'), () => toast('Selecione e copie o código'));
     }
+  });
+
+  // máscara de CPF
+  document.addEventListener('input', (e) => {
+    if (e.target.id !== 'ckCpf') return;
+    const d = e.target.value.replace(/\D/g, '').slice(0, 11);
+    e.target.value = d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/(\d{3})\.(\d{3})\.(\d{3})(\d)/, '$1.$2.$3-$4');
   });
 
   load();

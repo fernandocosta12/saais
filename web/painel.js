@@ -10,7 +10,7 @@
   const STATUS = [['pending', 'Em análise'], ['preparing', 'Em preparo'], ['ready', 'Pronto'], ['out_for_delivery', 'Em entrega'], ['completed', 'Finalizado']];
   const PAY = { pix: 'Pix', card_online: 'Cartão online', card_on_delivery: 'Cartão na entrega', cash: 'Dinheiro' };
   const ROLE = { owner: 'Dono', manager: 'Gerente', staff: 'Funcionário' };
-  const STORE_COLS = 'id,slug,name,logo_url,address,whatsapp,status,is_open,high_demand,delivery_fee_cents,min_order_cents,prep_minutes';
+  const STORE_COLS = 'id,slug,name,logo_url,address,whatsapp,status,is_open,high_demand,delivery_fee_cents,min_order_cents,prep_minutes,pix_enabled';
 
   let memberships = [], cur = null, tab = 'pedidos';
   let orders = [], seenPending = null, pollTimer = null, audioCtx = null;
@@ -371,7 +371,36 @@
       '<label class="f" for="sAddr">Endereço</label><input id="sAddr" maxlength="300" value="' + esc(s.address || '') + '" ' + dis + '>' +
       '<label class="f" for="sLogo">Link do logo (https://…, opcional)</label><input id="sLogo" maxlength="500" value="' + esc(s.logo_url || '') + '" ' + dis + '>' +
       '<div id="sErr" class="err"></div>' + (adm ? '<button class="btn" data-act="saveStore">Salvar</button>' : '<p class="small muted">Somente dono ou gerente pode alterar.</p>') + '</div>' +
+      (adm ? '<div class="card" id="payCard"><h3>Pagamento por Pix</h3><p class="small muted">Carregando…</p></div>' : '') +
       '<div class="card small muted">Logado como ' + esc(api.session && api.session.user ? api.session.user.email : '') + ' · ' + esc(ROLE[role()]) + '</div>';
+    if (adm) loadPayCard();
+  }
+
+  async function loadPayCard() {
+    const box = $('#payCard'); if (!box) return;
+    let acc = null;
+    try { acc = (await api.select('store_payment_accounts', { store_id: 'eq.' + store().id, select: 'environment,account_name,key_hint,status,connected_at' }))[0] || null; }
+    catch (e) { box.innerHTML = '<h3>Pagamento por Pix</h3><div class="err">' + esc(e.message) + '</div>'; return; }
+    const envLabel = { sandbox: 'Teste (sandbox)', production: 'Produção — dinheiro de verdade' };
+    let h = '<h3>Pagamento por Pix</h3>';
+    if (acc) {
+      h += '<p><span class="pill ok">✓ Pix ativo</span> <span class="pill ' + (acc.environment === 'production' ? 'blue' : 'warn') + '">' + esc(envLabel[acc.environment]) + '</span></p>' +
+        '<p class="small muted">Conta Asaas' + (acc.account_name ? ': <b>' + esc(acc.account_name) + '</b>' : '') + ' · chave terminando em <b>…' + esc(acc.key_hint) + '</b> · conectada em ' + new Date(acc.connected_at).toLocaleString('pt-BR') + '.<br>O dinheiro dos pedidos em Pix cai direto nessa conta.</p>';
+      if (isOwner()) h += '<div class="row" style="flex-wrap:wrap"><button class="btn sec sm" data-act="payShowForm">Trocar chave/ambiente</button><button class="btn red sm" data-act="payDisconnect">Desconectar</button></div>';
+    } else {
+      h += '<p class="small muted">Conecte a conta Asaas do restaurante para aceitar Pix. O dinheiro cai direto na conta do restaurante, sem passar pela plataforma.</p>';
+    }
+    if (isOwner()) {
+      h += '<div id="payForm" class="' + (acc ? 'hidden' : '') + '" style="margin-top:10px">' +
+        '<ol class="small muted" style="padding-left:18px;margin:0 0 8px"><li>Crie a conta em <b>asaas.com</b> (ou <b>sandbox.asaas.com</b> para testar).</li><li>No Asaas: <b>Integrações → Chaves de API → Gerar chave</b>.</li><li>Cole a chave abaixo. O aviso de pagamento é configurado automaticamente.</li></ol>' +
+        '<div class="formgrid"><div><label class="f" for="payEnv">Ambiente</label><select id="payEnv"><option value="sandbox">Teste (sandbox)</option><option value="production">Produção (dinheiro de verdade)</option></select></div>' +
+        '<div><label class="f" for="payKey">Chave de API do Asaas</label><input id="payKey" type="password" autocomplete="off" spellcheck="false" placeholder="$aact_..."></div></div>' +
+        '<p class="small muted">A chave é guardada criptografada e nunca é mostrada de novo — nem para você.</p>' +
+        '<div id="payErr" class="err"></div><button class="btn" data-act="payConnect">Conectar conta Asaas</button></div>';
+    } else if (!acc) {
+      h += '<p class="small muted">Somente o dono da loja pode conectar a conta de pagamento.</p>';
+    }
+    box.innerHTML = h;
   }
 
   // =============================================================== helpers de ação
@@ -379,7 +408,7 @@
     try { await fn(); if (okMsg) toast(okMsg); return true; } catch (e) { toast(e.message); return false; }
   }
   function patchStore(patch) {
-    return api.update('stores', { id: 'eq.' + store().id }, patch).then((rows) => {
+    return api.update('stores', { id: 'eq.' + store().id }, patch, STORE_COLS).then((rows) => {
       if (rows && rows[0]) Object.assign(cur.stores, rows[0]);
     });
   }
@@ -431,6 +460,26 @@
       if (wa && !/^\d{10,13}$/.test(wa)) return err('WhatsApp inválido.');
       if (logo && !/^https:\/\//i.test(logo)) return err('O link do logo precisa começar com https://');
       if (await run(() => patchStore({ name: $('#sName').value.trim(), whatsapp: wa || null, delivery_fee_cents: fee, min_order_cents: min, prep_minutes: prep, address: $('#sAddr').value.trim() || null, logo_url: logo || null }), 'Configurações salvas')) renderShell();
+    },
+    // pagamentos
+    payShowForm: () => { const f = $('#payForm'); if (f) f.classList.remove('hidden'); },
+    payConnect: async (el) => {
+      const key = $('#payKey').value.trim(), env = $('#payEnv').value;
+      const err = (m) => { $('#payErr').textContent = m; };
+      if (!key) return err('Cole a chave de API do Asaas.');
+      if (env === 'production' && !confirm('Conectar em PRODUÇÃO? A partir daí os pedidos em Pix cobram dinheiro de verdade.')) return;
+      el.disabled = true; el.textContent = 'Conectando…';
+      try {
+        await api.fnAuth('connect-payment-account', { action: 'connect', store_id: store().id, environment: env, api_key: key });
+        $('#payKey').value = '';
+        cur.stores.pix_enabled = true; toast('Conta Asaas conectada. Pix ativo!'); loadPayCard();
+      } catch (e) { el.disabled = false; el.textContent = 'Conectar conta Asaas'; err(e.message); }
+    },
+    payDisconnect: async (el) => {
+      if (!confirm('Desconectar a conta Asaas? O Pix sai do cardápio na hora.')) return;
+      el.disabled = true;
+      try { await api.fnAuth('connect-payment-account', { action: 'disconnect', store_id: store().id }); cur.stores.pix_enabled = false; toast('Conta desconectada'); loadPayCard(); }
+      catch (e) { el.disabled = false; toast(e.message); }
     },
     // pedidos
     setStatus: async (el) => {

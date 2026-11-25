@@ -151,8 +151,10 @@
       if (opts.onConflict) prefer.push('resolution=merge-duplicates');
       return request('/rest/v1/' + table + q, { method: 'POST', body: rows, headers: { Prefer: prefer.join(',') } });
     },
-    update(table, filters, patch) {
-      return request('/rest/v1/' + table + '?' + qs(filters), {
+    update(table, filters, patch, select) {
+      // select: colunas devolvidas (evita pedir colunas sem permissão de leitura)
+      const f = Object.assign({}, filters, select ? { select } : {});
+      return request('/rest/v1/' + table + '?' + qs(f), {
         method: 'PATCH', body: patch, headers: { Prefer: 'return=representation' }
       });
     },
@@ -166,6 +168,10 @@
     // ---------- Edge Functions ----------
     fn(name, body) {
       return request('/functions/v1/' + name, { method: 'POST', auth: false, body });
+    },
+    // Edge Function que exige o usuário logado (manda o token da sessão)
+    fnAuth(name, body) {
+      return request('/functions/v1/' + name, { method: 'POST', body });
     }
   };
 
@@ -186,6 +192,12 @@
       return 'há ' + Math.floor(h / 24) + 'd';
     },
     digits: (s) => String(s || '').replace(/\D/g, ''),
+    isCpf: (raw) => {
+      const c = String(raw || '').replace(/\D/g, '');
+      if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
+      const dv = (len) => { let s = 0; for (let i = 0; i < len; i++) s += Number(c[i]) * (len + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+      return dv(9) === Number(c[9]) && dv(10) === Number(c[10]);
+    },
     waLink: (phone, text) => {
       let d = String(phone || '').replace(/\D/g, ''); if (d.length <= 11) d = '55' + d;
       return 'https://wa.me/' + d + '?text=' + encodeURIComponent(text);

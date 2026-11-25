@@ -15,6 +15,7 @@ export function corsHeaders(req: Request): HeadersInit {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Max-Age": "86400",
     "Vary": "Origin",
   };
 }
@@ -32,7 +33,7 @@ export function clientIp(req: Request): string {
 
 // Mensagens vindas do banco (raise exception) são seguras para o cliente;
 // erros inesperados viram mensagem genérica (não vaza detalhes internos).
-const SAFE_DB_ERROR = /^(Loja|A loja|Escolha|A sacola|Item|Quantidade|Um dos|Um adicional|Adicionais|Pedido mínimo|Cupom|Este cupom|Informe|O valor|Forma de)/;
+const SAFE_DB_ERROR = /^(Pix|Loja|A loja|Escolha|A sacola|Item|Quantidade|Um dos|Um adicional|Adicionais|Pedido mínimo|Cupom|Este cupom|Informe|O valor|Forma de)/;
 export function publicError(err: unknown): string {
   const msg = (err as { message?: string })?.message ?? "";
   return SAFE_DB_ERROR.test(msg) ? msg : "Não foi possível processar o pedido. Tente novamente.";

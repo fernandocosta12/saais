@@ -31,7 +31,7 @@ Plataforma de delivery próprio para restaurantes: cardápio digital, pedido sem
 | Banco, login, tempo real | Supabase (Postgres) — projeto `pedido-direto`, região São Paulo | RLS dá isolamento entre lojas no próprio banco |
 | Regras de dinheiro | Funções SQL `security definer` | O navegador nunca define preço, total ou status de pagamento |
 | Backend | Supabase Edge Functions (Deno) | Guardam os segredos do gateway; recebem o webhook |
-| Pagamento | Asaas (sugestão) — trocável pela interface `PaymentProvider` | Pix com webhook, bom para PJ pequena no Brasil |
+| Pagamento | Asaas, **na conta de cada restaurante** (chave no Vault) | O dinheiro cai direto no restaurante; a plataforma nunca segura valores |
 | Frontend | HTML + JavaScript puro em `web/`, sem dependências nem build; hospedagem estática (Vercel) | Menos peças para quebrar ou atualizar; política de segurança (CSP) rígida |
 
 ## 2. Modelo de dados
@@ -127,7 +127,7 @@ Qualquer transição fora desse desenho é recusada pelo banco (`update_order_st
 ### 3.5 Checklist antes de ir para produção
 - [ ] Ativar **proteção contra senhas vazadas** e **MFA** para donos (Auth → Settings)
 - [ ] Confirmação de e-mail obrigatória no cadastro
-- [ ] Configurar secrets das Edge Functions (`APP_ENV=production`, `ALLOWED_ORIGINS`, chaves do gateway)
+- [ ] Configurar secrets das Edge Functions (`APP_ENV=production`, `ALLOWED_ORIGINS`)
 - [x] Agendar `expire_pending_payments()` a cada minuto (pg_cron) — feito
 - [x] Edge Functions publicadas (`create-order`, `payment-webhook`) — feito, em modo desenvolvimento
 - [ ] Auth → URL Configuration: definir *Site URL* e *Redirect URLs* para o domínio do painel (links de confirmação de e-mail)
@@ -136,9 +136,42 @@ Qualquer transição fora desse desenho é recusada pelo banco (`update_order_st
 - [ ] Domínio próprio com HTTPS e cabeçalhos de segurança (CSP) no frontend
 - [ ] Política de privacidade e termos de uso publicados
 - [ ] Rodar `get_advisors` (segurança e performance) a cada migração
-- [ ] Teste de ponta a ponta com o Pix do sandbox do gateway
+- [ ] Teste de ponta a ponta com uma conta sandbox do Asaas (conectar → pedido Pix → "Confirmar pagamento" no sandbox → pedido entra na fila)
 
-## 4. Frontend (`web/`)
+## 4. Pagamento por Pix (conta Asaas de cada restaurante)
+
+Decisões (25/11/2026): o dinheiro vai **direto para a conta Asaas do restaurante** (a plataforma não intermedia valores) e o **CPF do pagador é pedido só quando ele escolhe Pix** (exigência do Asaas para emitir a cobrança).
+
+```
+Dono no painel ──chave Asaas──▶ connect-payment-account ──valida chave──▶ Asaas do restaurante
+                                     │  registra webhook (token aleatório de 64 caracteres)
+                                     ▼
+                         Vault (chave + token, criptografados) ──▶ stores.pix_enabled = true
+
+Cliente escolhe Pix + CPF ──▶ create-order ──▶ create_order() no banco (sem CPF)
+                                     │  cadastro do pagador no Asaas (cache por hash do CPF)
+                                     ▼
+                              cobrança Pix + QR Code ──▶ register_payment()
+
+Asaas do restaurante ──webhook ?store=<id>──▶ payment-webhook
+   valida token da loja (tempo constante) → consulta o pagamento no Asaas → confirm_store_payment()
+
+pg_cron (1/min) ──segredo do Vault──▶ payment-maintenance ──▶ cancela no Asaas o Pix vencido
+```
+
+| Risco | Proteção |
+|---|---|
+| Vazamento da chave do Asaas | Fica só no Vault; tabela guarda apenas o ID do segredo e os 4 últimos caracteres. Nenhum papel de usuário lê; só as Edge Functions |
+| Alguém liga o Pix sem conta | `pix_enabled` não é editável pelo painel; trigger `check_pix` recusa pedido Pix sem conta ativa |
+| Webhook falso ou de outra loja | Token por loja + consulta ao Asaas com a chave da loja + `confirm_store_payment` exige que o pagamento seja daquela loja |
+| Pagar um pedido já expirado (o QR do Asaas vale meses) | `payment-maintenance` apaga a cobrança no Asaas; se mesmo assim for paga, o pedido fica com `refund_required` |
+| CPF exposto | Não é gravado no banco nem no navegador; só vai para o Asaas. Guardamos um hash (SHA-256 com o id da loja) para reaproveitar o cadastro do pagador |
+| Asaas mandando e-mail/SMS ao cliente do restaurante | Pagador criado com `notificationDisabled: true` |
+| Só o dono mexe na conta | Edge Function confere o papel `owner`; desconectar também é conferido no banco |
+
+Testes (25/11/2026): 13 no banco (cofre, permissões, loja errada, desconexão apaga segredos), 5 contra as funções publicadas (webhook com token falso → 401, manutenção sem segredo → 401, conectar sem login → 401, Pix sem CPF e Pix sem conta → recusados), cliente Asaas testado com servidor simulado (cabeçalho `access_token`, corpo da cobrança, webhook), e 23 cenários de interface.
+
+## 5. Frontend (`web/`)
 
 | Página | Quem usa | O que faz |
 |---|---|---|
@@ -157,7 +190,7 @@ Decisões de segurança no frontend:
 
 Testes de interface (24/11/2026, navegador real + servidor simulado, com a CSP ativa): 16 cenários OK, incluindo pedido com adicional e cupom (total R$ 67,02 vindo do servidor), carga do pedido sem preços, acompanhamento atualizando sozinho, bloqueio do pedido mínimo e da loja fechada, login com senha errada, aceite de pedido, chegada de pedido novo sem recarregar, cadastro de item com custo, cupom, taxa de entrega e pausa da loja. Nenhuma violação de CSP.
 
-## 5. Estrutura do repositório
+## 6. Estrutura do repositório
 
 ```
 pedido-direto/
@@ -171,18 +204,20 @@ pedido-direto/
 │   └── functions/
 │       ├── _shared/             ← http (CORS, erros) e payments (gateway)
 │       ├── create-order/        ← cotação e criação de pedido + Pix
-│       └── payment-webhook/     ← confirmação de pagamento
+│       ├── connect-payment-account/ ← dono conecta a conta Asaas
+│       ├── payment-webhook/     ← confirmação de pagamento (por loja)
+│       └── payment-maintenance/ ← cancela no Asaas o Pix vencido (pg_cron)
 ├── .env.example
 └── README.md
 ```
 
-## 6. Roadmap
+## 7. Roadmap
 
 | Fase | Entrega | Status |
 |---|---|---|
 | 0 | Protótipo navegável | ✅ |
 | 1 | Banco seguro + regras de pedido/pagamento | ✅ |
 | 2 | Frontend: loja pública, acompanhamento e painel com login | ✅ |
-| 3 | Publicar o site + gateway real (sandbox Asaas) | Próximo |
+| 3 | Site publicado (saais-beta.vercel.app) + Pix real com a conta Asaas de cada restaurante | ✅ (falta o teste com uma conta sandbox real) |
 | 4 | CRM: disparos de recompra e reativação (WhatsApp API oficial + n8n) | |
 | 5 | Atendente de IA no WhatsApp, motoboys, integrações (iFood, PDVs) | |
