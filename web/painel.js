@@ -10,6 +10,16 @@
   const STATUS = [['pending', 'Em análise'], ['preparing', 'Em preparo'], ['ready', 'Pronto'], ['out_for_delivery', 'Em entrega'], ['completed', 'Finalizado']];
   const PAY = { pix: 'Pix', card_online: 'Cartão online', card_on_delivery: 'Cartão na entrega', cash: 'Dinheiro' };
   const ROLE = { owner: 'Dono', manager: 'Gerente', staff: 'Funcionário' };
+  // Ícones (traço de 2px, herdam a cor do texto)
+  const svg = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  const ICONS = {
+    pedidos: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/>'),
+    cardapio: svg('<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6M8 11h6"/>'),
+    cupons: svg('<path d="M3 9V6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v3a3 3 0 0 0 0 6v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a3 3 0 0 0 0-6z"/><path d="M10 5v14" stroke-dasharray="2 2"/>'),
+    clientes: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/>'),
+    relatorios: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+    loja: svg('<path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12v8h14v-8"/><path d="M10 20v-5h4v5"/>')
+  };
   const STORE_COLS = 'id,slug,name,logo_url,address,whatsapp,status,is_open,high_demand,delivery_fee_cents,min_order_cents,prep_minutes,pix_enabled';
 
   let memberships = [], cur = null, tab = 'pedidos';
@@ -49,7 +59,7 @@
   function renderAuth(msg) {
     stopPolling();
     const t = { login: 'Entrar no painel', signup: 'Criar conta', forgot: 'Recuperar senha' }[authMode];
-    app.innerHTML = '<div class="center"><div class="card"><h2 style="margin-bottom:6px">' + t + '</h2>' +
+    app.innerHTML = '<div class="center"><a class="brandmark" href="index.html"><i>P</i>Pedido Direto</a><div class="card" style="padding:24px"><h2 style="margin-bottom:6px">' + t + '</h2>' +
       '<p class="small muted" style="margin-top:0">Painel do restaurante</p>' +
       (authMode === 'signup' ? '<label class="f" for="aName">Seu nome</label><input id="aName" autocomplete="name" maxlength="120">' : '') +
       '<label class="f" for="aEmail">E-mail</label><input id="aEmail" type="email" autocomplete="email">' +
@@ -108,16 +118,16 @@
   // =============================================================== shell
   function renderShell() {
     const pending = orders.filter((o) => o.status === 'pending').length;
-    const tabs = [['pedidos', '📋 Pedidos', pending], ['cardapio', '🍔 Cardápio'], ['cupons', '🏷️ Cupons', 0, true],
-      ['clientes', '👥 Clientes'], ['relatorios', '📊 Relatórios', 0, true], ['loja', '⚙️ Loja']]
+    const tabs = [['pedidos', 'Pedidos', pending], ['cardapio', 'Cardápio'], ['cupons', 'Cupons', 0, true],
+      ['clientes', 'Clientes'], ['relatorios', 'Relatórios', 0, true], ['loja', 'Loja']]
       .filter((t) => !t[3] || isAdmin());
     if (!tabs.some((t) => t[0] === tab)) tab = 'pedidos';
     app.innerHTML = '<div class="panel"><aside class="side"><div class="brand">' + esc(store().name) + '</div>' +
       (memberships.length > 1 ? '<div style="padding:0 10px 8px"><select data-change="pickStore" aria-label="Escolher loja" style="padding:7px 9px;font-size:13px">' +
         memberships.map((m) => '<option value="' + m.store_id + '"' + (m === cur ? ' selected' : '') + '>' + esc(m.stores.name) + '</option>').join('') + '</select></div>' : '') +
       '<div class="who">' + esc(ROLE[role()]) + '</div>' +
-      tabs.map(([id, l, b]) => '<button class="tab ' + (tab === id ? 'on' : '') + '" data-act="tab" data-t="' + id + '"><span>' + l + '</span>' + (b ? '<span class="badge">' + b + '</span>' : '') + '</button>').join('') +
-      '<div class="foot"><button class="btn sec sm" data-act="logout">Sair</button></div></aside><main class="main" id="pmain"><div class="loading">Carregando…</div></main></div>';
+      tabs.map(([id, l, b]) => '<button class="tab ' + (tab === id ? 'on' : '') + '" data-act="tab" data-t="' + id + '">' + ICONS[id] + '<span class="lbl">' + l + '</span>' + (b ? '<span class="badge">' + b + '</span>' : '') + '</button>').join('') +
+      '<div class="foot"><button class="btn sm" data-act="logout">Sair</button></div></aside><main class="main" id="pmain"><div class="loading">Carregando…</div></main></div>';
     ({ pedidos: tabOrders, cardapio: tabMenu, cupons: tabCoupons, clientes: tabClients, relatorios: tabReports, loja: tabStore })[tab]();
   }
   const main = () => $('#pmain');
@@ -185,7 +195,7 @@
     h += '<div class="kanban">' + STATUS.map(([s, label]) => {
       const list = orders.filter((o) => o.status === s);
       if (s === 'completed') list.reverse();
-      return '<div class="col"><h4>' + label + '<span class="muted">' + list.length + '</span></h4>' + (list.map(orderCard).join('') || '<div class="small muted" style="padding:6px">Nenhum pedido</div>') + '</div>';
+      return '<div class="col st-' + s + '"><h4>' + label + '<span class="muted">' + list.length + '</span></h4>' + (list.map(orderCard).join('') || '<div class="small muted" style="padding:6px">Nenhum pedido</div>') + '</div>';
     }).join('') + '</div>';
     const closed = orders.filter((o) => ['rejected', 'canceled'].includes(o.status));
     if (closed.length) h += '<p class="small muted">Recusados/cancelados hoje: ' + closed.map((o) => '#' + o.number).join(', ') + '</p>';
@@ -212,16 +222,16 @@
     if (msg && /^\d{10,13}$/.test(o.customer_phone)) acts += '<a class="btn sec sm" target="_blank" rel="noopener noreferrer" href="' + esc(ui.waLink(o.customer_phone, msg)) + '">💬 Avisar</a>';
     const payLabel = esc(PAY[o.payment_method] || o.payment_method) + (o.payment_status === 'paid' ? ' · pago' : '') + (o.payment_method === 'cash' && o.change_for_cents ? ' · troco p/ ' + money(o.change_for_cents) : '');
     return '<div class="oc ' + (o.status === 'pending' ? 'new' : '') + '">' +
-      '<div class="h"><b>#' + o.number + ' · ' + first + '</b><span class="small muted">' + ui.hhmm(o.created_at) + '</span></div>' +
+      '<div class="h"><b>#' + o.number + ' <small>' + first + '</small></b><span class="small muted">' + ui.hhmm(o.created_at) + '</span></div>' +
       '<div class="row" style="flex-wrap:wrap;gap:5px"><span class="pill ' + (o.mode === 'delivery' ? 'blue' : '') + '">' + (o.mode === 'delivery' ? '🛵 Entrega' : '🏪 Retirada') + '</span>' +
       '<span class="pill ' + (o.payment_status === 'paid' ? 'ok' : '') + '">' + payLabel + '</span>' + (late ? '<span class="pill red">Atrasado</span>' : '') + '</div>' +
-      '<ul>' + o.order_items.map((i) => '<li>' + i.quantity + '× ' + esc(i.product_name) +
+      '<ul>' + o.order_items.map((i) => '<li><b>' + i.quantity + '×</b> ' + esc(i.product_name) +
         (i.addons && i.addons.length ? ' <span class="muted">+' + esc(i.addons.map((a) => a.name).join(', ')) + '</span>' : '') +
         (i.notes ? '<br><span class="small" style="color:var(--warn)">Obs.: ' + esc(i.notes) + '</span>' : '') + '</li>').join('') + '</ul>' +
       (o.notes ? '<div class="small" style="color:var(--warn)">📝 ' + esc(o.notes) + '</div>' : '') +
       (o.delivery_address ? '<div class="small muted">📍 ' + esc(o.delivery_address) + '</div>' : '') +
       '<div class="small muted">' + esc(o.customer_name) + ' · ' + esc(o.customer_phone) + '</div>' +
-      '<div class="row" style="justify-content:space-between;margin-top:6px"><span class="small muted">' + ui.ago(o.created_at) + (o.coupon_code ? ' · ' + esc(o.coupon_code) : '') + '</span><b>' + money(o.total_cents) + '</b></div>' +
+      '<div class="tot-row"><span class="small muted">' + ui.ago(o.created_at) + (o.coupon_code ? ' · cupom ' + esc(o.coupon_code) : '') + '</span><b>' + money(o.total_cents) + '</b></div>' +
       '<div class="acts">' + acts + '</div></div>';
   }
 
